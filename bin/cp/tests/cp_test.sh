@@ -211,12 +211,11 @@ standalone_Pflag_body()
 
 atf_test_case a_flag_copies_xattr
 a_flag_copies_xattr_body() {
-	touch copy_file
-	touch original_file
+	touch original
 
-	atf_check setextattr user name TEST original_file
-	atf_check cp -a original_file copy_file
-        atf_check test "" = "$(getextattr user name copy_file)"
+	atf_check setextattr user name TEST original
+	atf_check cp -a original copy
+	atf_check test "copy	TEST" = "$(getextattr user name copy)"
 }
 
 atf_init_test_cases()
