@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/acl.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/extattr.h>
 #ifdef VM_AND_BUFFER_CACHE_SYNCHRONIZED
 #include <sys/mman.h>
 #endif
@@ -52,6 +53,7 @@ __FBSDID("$FreeBSD$");
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
 
@@ -281,6 +283,8 @@ copy_file(const FTSENT *entp, int dne)
 		if (pflag && setfile(fs, to_fd))
 			rval = 1;
 		if (pflag && preserve_fd_acls(from_fd, to_fd) != 0)
+			rval = 1;
+		if(user_extattr_copy_fd(from_fd, to_fd) != 0)
 			rval = 1;
 		if (close(to_fd)) {
 			warn("%s", to.p_path);
@@ -576,4 +580,77 @@ usage(void)
 	    "source_file ... "
 	    "target_directory");
 	exit(EX_USAGE);
+}
+
+int
+user_extattr_copy_fd(int from_fd, int to_fd)
+{
+	ssize_t llen, vlen, maxvlen;
+	size_t alen;
+	void *alist = NULL;
+	void *aval = NULL;
+	size_t i;
+	int error = -1;
+
+	llen = extattr_list_fd(from_fd, EXTATTR_NAMESPACE_USER, NULL, 0);
+	if (llen == -1) {
+		/* Silently ignore when EA are not supported */
+		if (errno == EOPNOTSUPP)
+			error = 0;
+		goto out;
+	}
+
+	if (llen == 0) {
+		error = 0;
+		goto out;
+	}
+
+	if ((alist = malloc((size_t)llen)) == NULL)
+		goto out;
+
+	llen = extattr_list_fd(from_fd, EXTATTR_NAMESPACE_USER, alist, (size_t)llen);
+	if (llen == -1)
+		goto out;
+
+	maxvlen = 1024;
+	if ((aval = malloc((size_t)maxvlen)) == NULL)
+		goto out;
+
+	for (i = 0; i < (size_t)llen; i += alen + 1) {
+		char aname[NAME_MAX + 1];
+		char *ap;
+
+		alen = ((uint8_t *)alist)[i];
+		ap = ((char *)alist) + i + 1;
+		(void)memcpy(aname, ap, alen);
+		aname[alen] = '\0';
+
+		vlen = extattr_get_fd(from_fd, EXTATTR_NAMESPACE_USER, aname, NULL, 0);
+		if (vlen == -1)
+			goto out;
+
+		if (vlen > maxvlen) {
+			if ((aval = realloc(aval, (size_t)vlen)) == NULL)
+				goto out;
+			maxvlen = vlen;
+		}
+
+		if ((vlen = extattr_get_fd(from_fd, EXTATTR_NAMESPACE_USER, aname,
+				      aval, (size_t)vlen)) == -1)
+			goto out;
+	
+		if (extattr_set_fd(to_fd, EXTATTR_NAMESPACE_USER, aname,
+				   aval, (size_t)vlen) != vlen)
+			goto out;
+	}
+
+	error = 0;
+out:
+	if (aval != NULL)
+		free(aval);
+	
+	if (alist != NULL)
+		free(alist);
+	
+	return error;
 }

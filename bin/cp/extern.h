@@ -51,4 +51,5 @@ int	setfile(struct stat *, int);
 int	preserve_dir_acls(struct stat *, char *, char *);
 int	preserve_fd_acls(int, int);
 void	usage(void);
+int user_extattr_copy_fd(int, int);
 __END_DECLS
