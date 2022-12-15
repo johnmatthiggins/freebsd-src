@@ -216,7 +216,7 @@ a_flag_copies_xattr_body() {
 
 	atf_check setextattr user name TEST original_file
 	atf_check cp -a original_file copy_file
-	atf_check getextattr user name copy_file
+        atf_check test "" = "$(getextattr user name copy_file)"
 }
 
 atf_init_test_cases()
