@@ -1,0 +1,142 @@
+diff --git a/bin/cp/extern.h b/bin/cp/extern.h
+index 65360ccaf6c1..df4086d71876 100644
+--- a/bin/cp/extern.h
++++ b/bin/cp/extern.h
+@@ -51,4 +51,5 @@ int	setfile(struct stat *, int);
+ int	preserve_dir_acls(struct stat *, char *, char *);
+ int	preserve_fd_acls(int, int);
+ void	usage(void);
++int user_extattr_copy_fd(int, int);
+ __END_DECLS
+diff --git a/bin/cp/tests/cp_test.sh b/bin/cp/tests/cp_test.sh
+index 7362168d7303..7d3ff75c1ea4 100755
+--- a/bin/cp/tests/cp_test.sh
++++ b/bin/cp/tests/cp_test.sh
+@@ -209,6 +209,15 @@ standalone_Pflag_body()
+ 	atf_check -o inline:'Symbolic Link\n' stat -f %SHT baz
+ }
+ 
++atf_test_case a_flag_copies_xattr
++a_flag_copies_xattr_body() {
++	touch original
++
++	atf_check setextattr user name TEST original
++	atf_check cp -a original copy
++	atf_check test "copy	TEST" = "$(getextattr user name copy)"
++}
++
+ atf_init_test_cases()
+ {
+ 	atf_add_test_case basic
+@@ -222,4 +231,5 @@ atf_init_test_cases()
+ 	atf_add_test_case recursive_link_Hflag
+ 	atf_add_test_case recursive_link_Lflag
+ 	atf_add_test_case standalone_Pflag
++	atf_add_test_case a_flag_copies_xattr
+ }
+diff --git a/bin/cp/utils.c b/bin/cp/utils.c
+index 07de0495ba9e..eb2e9ffa1744 100644
+--- a/bin/cp/utils.c
++++ b/bin/cp/utils.c
+@@ -41,6 +41,7 @@ __FBSDID("$FreeBSD$");
+ #include <sys/acl.h>
+ #include <sys/param.h>
+ #include <sys/stat.h>
++#include <sys/extattr.h>
+ #ifdef VM_AND_BUFFER_CACHE_SYNCHRONIZED
+ #include <sys/mman.h>
+ #endif
+@@ -52,6 +53,7 @@ __FBSDID("$FreeBSD$");
+ #include <limits.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <sysexits.h>
+ #include <unistd.h>
+ 
+@@ -282,6 +284,8 @@ copy_file(const FTSENT *entp, int dne)
+ 			rval = 1;
+ 		if (pflag && preserve_fd_acls(from_fd, to_fd) != 0)
+ 			rval = 1;
++		if(user_extattr_copy_fd(from_fd, to_fd) != 0)
++			rval = 1;
+ 		if (close(to_fd)) {
+ 			warn("%s", to.p_path);
+ 			rval = 1;
+@@ -577,3 +581,76 @@ usage(void)
+ 	    "target_directory");
+ 	exit(EX_USAGE);
+ }
++
++int
++user_extattr_copy_fd(int from_fd, int to_fd)
++{
++	ssize_t llen, vlen, maxvlen;
++	size_t alen;
++	void *alist = NULL;
++	void *aval = NULL;
++	size_t i;
++	int error = -1;
++
++	llen = extattr_list_fd(from_fd, EXTATTR_NAMESPACE_USER, NULL, 0);
++	if (llen == -1) {
++		/* Silently ignore when EA are not supported */
++		if (errno == EOPNOTSUPP)
++			error = 0;
++		goto out;
++	}
++
++	if (llen == 0) {
++		error = 0;
++		goto out;
++	}
++
++	if ((alist = malloc((size_t)llen)) == NULL)
++		goto out;
++
++	llen = extattr_list_fd(from_fd, EXTATTR_NAMESPACE_USER, alist, (size_t)llen);
++	if (llen == -1)
++		goto out;
++
++	maxvlen = 1024;
++	if ((aval = malloc((size_t)maxvlen)) == NULL)
++		goto out;
++
++	for (i = 0; i < (size_t)llen; i += alen + 1) {
++		char aname[NAME_MAX + 1];
++		char *ap;
++
++		alen = ((uint8_t *)alist)[i];
++		ap = ((char *)alist) + i + 1;
++		(void)memcpy(aname, ap, alen);
++		aname[alen] = '\0';
++
++		vlen = extattr_get_fd(from_fd, EXTATTR_NAMESPACE_USER, aname, NULL, 0);
++		if (vlen == -1)
++			goto out;
++
++		if (vlen > maxvlen) {
++			if ((aval = realloc(aval, (size_t)vlen)) == NULL)
++				goto out;
++			maxvlen = vlen;
++		}
++
++		if ((vlen = extattr_get_fd(from_fd, EXTATTR_NAMESPACE_USER, aname,
++				      aval, (size_t)vlen)) == -1)
++			goto out;
++	
++		if (extattr_set_fd(to_fd, EXTATTR_NAMESPACE_USER, aname,
++				   aval, (size_t)vlen) != vlen)
++			goto out;
++	}
++
++	error = 0;
++out:
++	if (aval != NULL)
++		free(aval);
++	
++	if (alist != NULL)
++		free(alist);
++	
++	return error;
++}
