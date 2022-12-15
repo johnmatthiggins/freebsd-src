@@ -210,6 +210,17 @@ standalone_Pflag_body()
 	atf_check -o inline:'Symbolic Link\n' stat -f %SHT baz
 }
 
+
+atf_test_case a_flag_copies_xattr
+a_flag_copies_xattr_body() {
+	touch copy_file
+	touch original_file
+
+	atf_check setextattr user name TEST original_file
+	atf_check cp -a original_file copy_file
+	atf_check getextattr user name copy_file
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case basic
@@ -223,4 +234,5 @@ atf_init_test_cases()
 	atf_add_test_case recursive_link_Hflag
 	atf_add_test_case recursive_link_Lflag
 	atf_add_test_case standalone_Pflag
+	atf_add_test_case a_flag_copies_xattr
 }
